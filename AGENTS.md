@@ -1,10 +1,11 @@
 # AGENTS.md
 
 `podman-static-nonroot` — wrapper tooling that builds `.deb`, `.rpm` and Arch
-`.pkg.tar.zst` packages of the static `mgoltzsche/podman-static` binaries.
-Task 1 (packaging) only; the relocatable non-root tarball + `install.sh` (Task 2),
-the QEMU VM harness, CI/release wiring, GPG signatures and maintainer scripts are
-planned, NOT implemented. Upstream source is fetched at build time (never vendored).
+`.pkg.tar.zst` packages of the static `mgoltzsche/podman-static` binaries
+(Task 1) plus a relocatable, `$HOME`-scoped non-root tarball with
+`install.sh`/`uninstall.sh` (Task 2). The QEMU VM harness, CI/release wiring,
+GPG signatures and maintainer scripts are planned, NOT implemented. Upstream
+source is fetched at build time (never vendored).
 
 ## Layout
 
@@ -15,11 +16,16 @@ planned, NOT implemented. Upstream source is fetched at build time (never vendor
 - `dist/` is GONE. Upstream is fetched by `Containerfile` into `.cache/upstream/`
   and verified by `scripts/verify-upstream.sh`; the compiled rootfs is exported to
   `.cache/rootfs/` by `podman build -o type=local`.
-- `scripts/` — `version.sh` (VERSION/RELEASE + ARCH_DEB/RPM/PKG), `gen-nfpm.sh`
-  (renders the template to stdout), `verify-upstream.sh` (pin + PODMAN_VERSION
-  check), `pack.sh` (per-format nfpm runs + filename verify + SHA256SUMS),
+- `scripts/` — `version.sh` (VERSION/RELEASE + ARCH_DEB/RPM/PKG + USER_FILE),
+  `gen-nfpm.sh` (renders the template to stdout), `verify-upstream.sh` (pin +
+  PODMAN_VERSION check), `pack.sh` (per-format nfpm runs + filename verify +
+  SHA256SUMS), `pack-user.sh` (Task 2 tarball from the staged tree),
   `stage.sh` (assembles `$(ASSET_DIR)` from the exported rootfs),
   `release-assets.sh`.
+- `templates/` — Task 2 payload sources shipped inside the user tarball:
+  `user-install.sh`, `user-uninstall.sh`, `env.sh.in`, `containers.conf.in`,
+  `storage.conf.in`, `user-README.md` (installed as `README.md`). Templates use
+  the literal `@PREFIX@` placeholder; only `install.sh` renders it.
 - `nfpm.yaml` — committed template, substituted by `gen-nfpm.sh` into
   `out/nfpm-<ARCH>.yaml`; `pack.sh` drives nfpm with that.
 - `tests/` — self-contained Python project (`pyproject.toml`, `uv.lock`,
@@ -27,7 +33,8 @@ planned, NOT implemented. Upstream source is fetched at build time (never vendor
   `tests/fixtures/asset/` is the committed synthetic staging tree mirroring
   upstream, so the fixture path needs no upstream build.
 - `out/` — generated: staged asset tree `out/asset/podman-linux-<ARCH>/`, the
-  three packages, `out/nfpm-<ARCH>.yaml`, `out/SHA256SUMS`; gitignored.
+  three packages, the user tarball, `out/nfpm-<ARCH>.yaml`, `out/SHA256SUMS`;
+  gitignored.
 - `.cache/` — generated fetch/rootfs cache; gitignored.
 - `INFO.md` = background (upstream build pipeline, path inventory, prereqs);
   `TODO.md` = tracked plan (do not remove).
@@ -44,26 +51,28 @@ planned, NOT implemented. Upstream source is fetched at build time (never vendor
   pytest/ruff venv + shellcheck + archive tools). Prerequisite of all
   containerized targets; cached after first build.
 - `make all` = `tools-image` + `_pack-fixture _test _lint` inside the tooling
-  image. 51 pytest tests + ruff + shellcheck; no upstream build, no docker.
+  image. 82 pytest tests + ruff + shellcheck; no upstream build, no docker.
 - `make fetch` — fetches upstream at `UPSTREAM_REF` inside `Containerfile`,
   exports `.cache/upstream/`, verifies pin + `ARG PODMAN_VERSION`.
 - `make build` — opt-in REAL upstream build: `fetch` + `podman build ... -o
   type=local,dest=.cache/rootfs` + `scripts/stage.sh` in the tooling image.
   Never `make install` (needs root). After it, `make pack` emits real packages.
-- `make pack` — all three formats from `$(ASSET_DIR)` into `$(OUT_DIR)`.
-  `make pack-deb | pack-rpm | pack-pkg` — one format.
-- `make pack-fixture` — packs the synthetic fixture into `out/`.
-  `make checksums` — (re)writes `out/SHA256SUMS`.
-- Targets: `all fetch tools-image build stage pack pack-deb pack-rpm pack-pkg
-  pack-fixture checksums test lint vet clean distclean vm-test print-vars
-  print-release-assets register-qemu` plus `_`-prefixed internal targets that
-  run scripts directly with no `podman run` (used inside the container so the
-  tooling image never recurses).
+- `make pack` — all three formats plus the user tarball from `$(ASSET_DIR)`
+  into `$(OUT_DIR)`. `make pack-deb | pack-rpm | pack-pkg` — one format.
+  `make pack-user` — just `podman-static-<V>-<R>-<ARCH>-user.tar.gz`.
+- `make pack-fixture` — packs the synthetic fixture into `out/` (packages +
+  user tarball; it OVERWRITES real packages in the same `out/`).
+  `make checksums` — (re)writes `out/SHA256SUMS` (all present artifacts).
+- Targets: `all fetch tools-image build stage pack pack-user pack-deb pack-rpm
+  pack-pkg pack-fixture checksums test lint vet clean distclean vm-test
+  print-vars print-release-assets register-qemu` plus `_`-prefixed internal
+  targets that run scripts directly with no `podman run` (used inside the
+  container so the tooling image never recurses).
 - `make clean` = `rm -rf out .cache/rootfs`; `make distclean` also removes
   `.cache`.
 - `make print-vars` — show derived vars. `make print-release-assets` — prints
-  the 6 package files (3 formats x 2 arches) + `SHA256SUMS` for a FUTURE CI step
-  to consume. `make vm-test` — future/opt-in QEMU harness, not part of `make all`.
+  the 8 artifacts (4 formats x 2 arches) + `SHA256SUMS` for a FUTURE CI step to
+  consume. `make vm-test` — future/opt-in QEMU harness, not part of `make all`.
 - `make register-qemu` — opt-in host binfmt registration for arm64 cross-build
   (`podman run --privileged multiarch/qemu-user-static`).
 - `make build PROXY=socks5://127.0.0.1:23133` — opt-in proxy for network-
@@ -82,12 +91,16 @@ planned, NOT implemented. Upstream source is fetched at build time (never vendor
   `uv sync --project /opt/tests-deps --frozen` from the committed `tests/uv.lock`;
   `PATH` is set to that venv. No host `uv`, no `--no-sync` at runtime.
 - The session `artifacts` fixture packs the synthetic fixture tree via
-  `make _pack` (internal target, nfpm on PATH inside the image).
+  `make _pack` (internal target, nfpm on PATH inside the image); it emits the 3
+  packages + the user tarball. `user_root` extracts that tarball once for the
+  `test_install_sh.py` installer/uninstaller tests, which run as the real
+  non-root UID of the tooling container (host UID via `--userns=keep-id`).
 - `tests/helpers.py:load_vars` neutralizes the wrapper's injected env so
   `version.sh` override hooks are testable hermetically.
 - Markers `vm` and `e2e`, both opt-in, gated by `PODMAN_STATIC_VM_TEST=1` /
-  `PODMAN_STATIC_E2E=1`. `e2e` runs the real `make build pack`; `vm` boots the
-  (future) QEMU guest. Neither is in `make all`.
+  `PODMAN_STATIC_E2E=1`. No `e2e` test is wired yet (the marker is reserved for
+  a host-built real artifact); `vm` boots the (future) QEMU guest. Neither is in
+  `make all`.
 - Archive inspection: deb via stdlib `ar` parser + `tarfile`; rpm via `rpm -qip`
   / `rpm -qlp` / `rpm2cpio | bsdtar`; `.pkg.tar.zst` via `zstd -dc | tarfile`.
   All these tools live in the tooling image. Real `dpkg -i`/`rpm -i`/`pacman -U`
@@ -106,8 +119,9 @@ planned, NOT implemented. Upstream source is fetched at build time (never vendor
   `s!linux/([^/]+).*!\1!`), `OUT_DIR ?= out`,
   `ASSET_DIR ?= $(OUT_DIR)/asset/podman-linux-$(ARCH)`,
   `PKG_NAME ?= podman-static`,
-  `PKG_VERSION`, `PKG_RELEASE`, `ARCH_DEB`, `ARCH_RPM`, `ARCH_PKG` (last five from
-  `scripts/version.sh`).
+  `PKG_VERSION`, `PKG_RELEASE`, `ARCH_DEB`, `ARCH_RPM`, `ARCH_PKG`, `USER_FILE`
+  (last six from `scripts/version.sh`); `USER_FILE` is
+  `podman-static-<V>-<R>-<ARCH>-user.tar.gz` (plain `ARCH`, not `ARCH_PKG`).
 - `PACK_ENV` (inline env for scripts) and `PODMAN_ENV`/`PODMAN_RUN` (`-e` flags +
   `podman run --userns=keep-id -v "$(CURDIR):/work" -w /work`). `PODMAN_BUILD`
   wraps `podman build` with `PROXY_ENV` + `--network=host` when `PROXY` is set.
@@ -140,6 +154,21 @@ planned, NOT implemented. Upstream source is fetched at build time (never vendor
 - `.gitignore`: `out/`, `.cache/`, `.venv*/`, `.pytest_cache/`, `.ruff_cache/`,
   `__pycache__/`, `*.py[cod]`, `.vm-cache/`, `tests/vm/results/`, `*.asc`,
   `*.sha256`.
+- Task 2 payload contract: the tarball top dir is `podman-static-user/` with
+  `bin/` (podman, crun, runc, fuse-overlayfs, fusermount3, passt[/.avx2], pasta
+  symlinks), `lib/podman/` (conmon, netavark, aardvark-dns, catatonit,
+  rootlessport), `share/` (completions + seccomp.json), `etc/containers/`
+  (`containers.conf.in`, `storage.conf.in`, registries, policy), plus
+  `env.sh.in`, `install.sh`, `uninstall.sh`, `README.md`, `RELEASE`, optional
+  `LICENSE`. No systemd, no quadlet, no `usr/`, no docker alias.
+- `install.sh` installs to `--prefix` > `PODMAN_STATIC_PREFIX` >
+  `$HOME/.local/opt/podman-static`; refuses root/modified prefixes and writes a
+  `.podman-static/manifest` (sha256 per file, link targets, dirs). Rendered
+  configs point at the prefix; storage lives under `<prefix>/var` (dedicated
+  graphroot/runroot, never the distro store). Uninstall removes only unchanged
+  manifest entries and preserves `var/`. Test hooks: `PODMAN_STATIC_EUID`,
+  `PODMAN_STATIC_PREFLIGHT=0`, `PODMAN_STATIC_{NEWUIDMAP,NEWGIDMAP,NFT,NSENTER,
+  FUSE_DEV,SUBUID_FILE,SUBGID_FILE}`.
 
 ## Gotchas
 
@@ -165,14 +194,23 @@ planned, NOT implemented. Upstream source is fetched at build time (never vendor
 - `config|noreplace|tree` marks `/etc/containers` files as conffiles/backup, so
   upgrades never clobber user config. Keep it.
 - Symlinks are load-bearing and path-bound: relative quadlet-generator links and
-  the `/usr/bin/docker` link. They install to absolute `/usr` paths in Task 1;
-  relocating them is Task 2's problem (quadlet `_binDir` is compiled in).
+  the `/usr/bin/docker` link. They install to absolute `/usr` paths in Task 1.
+  Task 2 excludes them (quadlet `_binDir` is compiled in); only the `pasta[.avx2]`
+  sibling symlinks are carried into the user tarball.
 - Network is required at build time (fetch clone, nfpm release, uv wheels,
   upstream's Go/Rust/git clones); pins + podman layer cache are the mitigation.
   `passt.top` is a flaky upstream clone — `make build PROXY=...` routes it through
   an optional SOCKS/HTTP proxy with `--network=host`.
 - The installed `/usr/local/bin/docker` symlink inside the package is a payload
   name for docker-compatible CLIs, NOT a build dependency.
-- FUTURE / not implemented: Task 2 relocatable non-root tarball + `install.sh`,
-  the QEMU VM harness (`vm-test`), CI/release wiring, GPG package signatures, and
-  maintainer scripts. Do not claim they exist; `make all` is fixture-only.
+- `pack-user.sh` must stay BusyBox-compatible: the installer runs under the
+  Alpine tooling image, so no `find -printf`, GNU-only `sort` keys, or `--`
+  end-of-options tricks. `templates/*.sh` are shellchecked by `make lint`.
+- `make all` packs the SYNTHETIC fixture into the default `out/`, overwriting
+  real packages/tarball of the same names. Run `make pack` afterwards to restore
+  real artifacts; `make pack-fixture OUT_DIR=<tmp>` to keep them side by side.
+- FUTURE / not implemented: the QEMU VM harness (`vm-test`), CI/release wiring,
+  GPG package signatures, maintainer scripts, in-place user-tarball upgrades,
+  and native `dpkg -i`/`rpm -i`/`pacman -U`/`podman run` acceptance (fixture
+  install tests exercise the installer, not a live container runtime). Do not
+  claim they exist; `make all` is fixture-only.

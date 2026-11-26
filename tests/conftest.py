@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from helpers import ROOT, load_vars, pack_fixture, package_paths
+from helpers import (
+    ROOT,
+    extract_tarball,
+    load_vars,
+    pack_fixture,
+    package_paths,
+    user_tarball_path,
+)
 
 E2E_ENABLED = os.environ.get("PODMAN_STATIC_E2E") == "1"
 
@@ -29,11 +36,20 @@ def artifacts(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Pack the fixture tree once per session and return the output directory."""
     out_dir = tmp_path_factory.mktemp("pack")
     pack_fixture(out_dir)
-    paths = package_paths(out_dir, load_vars())
-    for fmt, path in paths.items():
+    v = load_vars()
+    for fmt, path in package_paths(out_dir, v).items():
         assert path.is_file(), f"missing {fmt} package: {path}"
     assert (out_dir / "SHA256SUMS").is_file(), "missing SHA256SUMS"
+    user_tarball = user_tarball_path(out_dir, v)
+    assert user_tarball.is_file(), f"missing user tarball: {user_tarball}"
     return out_dir
+
+
+@pytest.fixture(scope="session")
+def user_root(artifacts: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Extract the fixture user tarball once per session and return its root dir."""
+    dest = tmp_path_factory.mktemp("user-tarball")
+    return extract_tarball(user_tarball_path(artifacts, load_vars()), dest)
 
 
 @pytest.fixture

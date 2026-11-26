@@ -18,10 +18,21 @@ def test_pack_targets_dry_run_reference_packager() -> None:
 
 
 def test_public_targets_run_via_podman() -> None:
-    for target in ("pack", "test", "lint", "all"):
+    for target in ("pack", "pack-user", "test", "lint", "all"):
         out = _make("-n", target).lower()
         assert "podman" in out, f"{target} dry-run does not use podman: {out}"
     assert "_all" in _make("-n", "all"), "all must delegate to _all"
+
+
+def test_pack_dry_run_runs_both_packagers() -> None:
+    out = _make("-n", "_pack")
+    assert "scripts/pack.sh" in out, out
+    assert "scripts/pack-user.sh" in out, out
+
+
+def test_pack_user_target_references_pack_user_script() -> None:
+    out = _make("-n", "_pack-user")
+    assert "scripts/pack-user.sh" in out, out
 
 
 def test_print_vars() -> None:
@@ -29,11 +40,19 @@ def test_print_vars() -> None:
     assert re.search(r"PKG_VERSION[^\n]*6\.2\.0", out), out
     assert "podman-static" in out
     assert "UPSTREAM_REF=c55c0fb" in out, out
+    assert "USER_FILE=podman-static-6.2.0-1-amd64-user.tar.gz" in out, out
 
 
 def test_test_target_uses_pytest() -> None:
     out = _make("-n", "_test").lower()
     assert "pytest" in out, out
+
+
+def test_lint_and_vet_shellcheck_templates() -> None:
+    for target in ("_lint", "_vet"):
+        out = _make("-n", target)
+        assert "shellcheck" in out, out
+        assert "templates/*.sh" in out, f"{target} does not shellcheck templates/*.sh: {out}"
 
 
 def test_tools_image_uses_frozen_lock() -> None:
@@ -56,7 +75,11 @@ def test_clean_dry_run_removes_out() -> None:
 
 
 def test_no_docker_cli_or_buildx() -> None:
-    paths = [ROOT / "Makefile", *sorted((ROOT / "scripts").glob("*.sh"))]
+    paths = [
+        ROOT / "Makefile",
+        *sorted((ROOT / "scripts").glob("*.sh")),
+        *sorted((ROOT / "templates").glob("*.sh")),
+    ]
     for path in paths:
         text = path.read_text().lower()
         for forbidden in ("docker build", "docker run", "buildx", "dist/podman-static"):

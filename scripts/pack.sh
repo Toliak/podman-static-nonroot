@@ -14,11 +14,12 @@ ASSET_DIR=${ASSET_DIR:-$OUT_DIR/asset/podman-linux-$ARCH}
 DEB_FILE=$(v DEB_FILE)
 RPM_FILE=$(v RPM_FILE)
 PKG_FILE=$(v PKG_FILE)
+USER_FILE=$(v USER_FILE)
 
 write_checksums() {
   local -a files=()
   local f
-  for f in "$DEB_FILE" "$RPM_FILE" "$PKG_FILE"; do
+  for f in "$DEB_FILE" "$RPM_FILE" "$PKG_FILE" "$USER_FILE"; do
     if [[ -f "$OUT_DIR/$f" ]]; then
       files+=("$f")
     fi

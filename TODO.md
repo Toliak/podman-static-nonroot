@@ -122,27 +122,27 @@ Decisions on the "Confirm before coding" items (all reversible via Makefile vars
   - Tests/Docs: `tests/test_release_files.py` (every produced file is listed in CI assets), `AGENTS.md` Commands refresh.
   - Confirm before coding: whether CI is in scope for this phase at all, or only local tooling (workflow.yml lives in the vendored upstream and would mean editing it — remember "leave upstream untouched").
 
-- [ ] Audit hardcoded absolute paths in the asset tree (Task 2, do first for Task 2).
+- [x] Audit hardcoded absolute paths in the asset tree (Task 2, do first for Task 2). — Resolved (2026-11-26).
   - Inventory from research: `quadlet` binary has `_binDir=/usr/local/bin` **compiled in** (`Dockerfile:51`) — cannot be rewritten in the payload; `storage.conf.d/00-podman-static.conf:8` `mount_program = "/usr/local/bin/fuse-overlayfs"`; `/usr/bin/docker` symlink (`Dockerfile:188`); `seccomp.json` at `/etc/containers/seccomp.json` (`Dockerfile:40-42`); systemd units under `/usr/local/lib/systemd/` (`Makefile:116-121`, `Dockerfile:61-63,217-219`); `helper_binaries_dir` default `/usr/local/lib/podman`.
   - Decision: for a `$HOME` install, systemd units + quadlet generators are root/systemd-bound and are **excluded** from the user payload (upstream is explicitly "without systemd support", `README.md:3`); document that quadlet/systemd stays system-package-only. Confirm before coding (alternative: ship a quadlet shim that rewrites `_binDir` via a wrapper).
   - Config knobs to generate at install time: `mount_program`, `graphroot`/`runroot` (the drop-in deliberately omits them, `00-podman-static.conf:2-4` — podman 6 resolves rootless paths from `$HOME`/`$XDG_DATA_HOME`), `seccomp_profile`, `helper_binaries_dir`, `runtime`/`runtime_path`.
   - Record findings in `INFO.md`; add a `Gotchas` section in `AGENTS.md`.
   - Tests: `tests/test_path_audit.py` (greps the staged tree for `/usr/local`, `/etc/containers`, `/usr/bin` and asserts each occurrence is either rewritten or explicitly allow-listed/excluded).
 
-- [ ] Build the relocatable user payload (`scripts/pack-user.sh`, Task 2).
+- [x] Build the relocatable user payload (`scripts/pack-user.sh`, Task 2). — Resolved (2026-11-26).
   - From `out/asset/...` produce `out/podman-static-<VERSION>-<ARCH>-user.tar.gz` with a top-level `podman-static-user/` dir: `bin/`, `lib/podman/`, `libexec/podman/` (no quadlet), `share/` (completions + `seccomp.json`), `etc/containers/` templates, `install.sh`, `uninstall.sh`, `env.sh`, `README.md`.
   - Parameterize config templates with a placeholder (e.g. `@PREFIX@`) that `install.sh` substitutes — never emit a real absolute path into the tarball. Strip the two quadlet-generator symlinks and `/usr/local/lib/systemd` from this payload.
   - Makefile target `pack-user` (depends on `build`), included in `make pack`.
   - Tests: `tests/test_relocatable_payload.py` (tarball has zero absolute `/usr`/`/etc` path strings, all expected files/symlinks present, `@PREFIX@` placeholders present, no `setuid`/root-owned files).
   - Verification: `tar -tzf` + `grep` audit; `make pack` emits the user tarball alongside the 3 packages.
 
-- [ ] Write `install.sh` / `uninstall.sh` and the env shim (Task 2 core).
+- [x] Write `install.sh` / `uninstall.sh` and the env shim (Task 2 core). — Resolved (2026-11-26).
   - `install.sh`: `PREFIX=${PREFIX:-$HOME/.local}`; refuse if `id -u == 0` and confirm-no-root; refuse prefixes not writable by the current user; extract `bin/ lib/ libexec/ share/ etc/containers/` into `$PREFIX`; substitute `@PREFIX@` in generated `containers.conf` + `storage.conf.d/00-podman-static.conf` (`mount_program = "$PREFIX/bin/fuse-overlayfs"`, `seccomp_profile`, `helper_binaries_dir`); emit `$PREFIX/etc/containers/` and `$PREFIX/bin/podman-env.sh` exporting `PATH="$PREFIX/bin:$PATH"`, `CONTAINERS_CONF`, `CONTAINERS_STORAGE_CONF`, `XDG_DATA_HOME`/`XDG_CONFIG_HOME` where relevant; print a `podman run alpine echo hello` smoke command. Zero writes outside `$PREFIX`.
   - `uninstall.sh`: mirror `README.md:142-159` but scoped to `$PREFIX` (remove installed tree + env shim; warn about `podman system reset` for the user store).
   - Tests: `tests/test_install_sh.py` (install into `tmp_home` as non-root, assert success, no writes outside prefix, config paths rewritten to the prefix, `podman-env.sh` exports correct vars, `podman --version` resolves from `$PREFIX/bin`, `uninstall.sh` restores a clean prefix), `tests/test_install_guard.py` (refuses root / unwritable prefix / path traversal).
   - Shellcheck clean (`shellcheck -x -S warning`).
 
-- [ ] Handle host prerequisites that a no-root install still needs (Task 2 gotcha).
+- [x] Handle host prerequisites that a no-root install still needs (Task 2 gotcha). — Resolved (2026-11-26; warn-only).
   - From `README.md:86-106`: `nftables`, `nsenter`, `shadow`'s `newuidmap`/`newgidmap` (setuid-root or `cap_setuid=ep`/`cap_setgid=ep` file caps), `/etc/subuid`+`/etc/subgid` delegation for the user, apparmor profile fix, optional `docker` symlink. Subuid/subgid delegation normally needs root — a genuinely root-free install assumes the admin already delegated ranges.
   - `install.sh` must **detect and WARN**, never fail hard: probe subuid/subgid ranges, `newuidmap`/`newgidmap`, `nftables`/`nsenter`; offer a documented degraded single-UID/`--userns` mode when no ranges exist; print an actionable preflight report (similar in spirit to `pinp`'s `pinp-check --json`).
   - Decide whether to vendor/skip helpers or rely on host `shadow`; document the boundary clearly in `README.md` and `INFO.md`.

@@ -123,8 +123,58 @@ the host needs NO `nfpm`, `uv`, `pytest`, `ruff`, `shellcheck`, `dpkg-deb`,
 `rpmbuild`, `makepkg`, root, or docker. v1 emits checksums only; GPG package
 signatures are a future follow-up (upstream's `signed-tar` / `verify-signature`
 GPG infra could be reused). CI/release wiring is likewise deferred:
-`make print-release-assets` exposes the 6 package files (3 formats x 2 arches) +
+`make print-release-assets` exposes the 8 artifacts (4 formats x 2 arches) +
 `SHA256SUMS` for a future job to consume.
+
+## Task 2: relocatable non-root tarball
+
+`scripts/pack-user.sh` transforms the REAL staged tree (`$(ASSET_DIR)`) into
+`podman-static-<V>-<R>-<ARCH>-user.tar.gz` (top dir `podman-static-user/`).
+It runs in the tooling image (no nested podman) and also works against the
+synthetic fixture. Payload allowlist:
+
+- `bin/` — `podman`, `crun`, `runc`, `fuse-overlayfs`, `fusermount3`, `passt`
+  (+ `passt.avx2` when staged), `pasta` and `pasta.avx2` as sibling symlinks.
+- `lib/podman/` — `conmon`, `netavark`, `aardvark-dns`, `catatonit`,
+  `rootlessport` (moved out of `bin/` for old fixtures that stage them there).
+- `share/` — bash/zsh/fish completions + `seccomp.json` (moved from
+  `etc/containers/`).
+- `etc/containers/` — `containers.conf.in`, `storage.conf.in` templates plus
+  `registries.conf` and `policy.json`.
+- top level — `install.sh`, `uninstall.sh`, `env.sh.in`, `README.md`, `RELEASE`,
+  optional `LICENSE` (only when `.cache/upstream/LICENSE` exists).
+- EXCLUDED: `usr/local/lib/systemd/**`, both generator symlinks,
+  `libexec/podman/quadlet`, `/usr/bin/docker`, `newuidmap`/`nft` and other
+  Alpine rootfs content.
+
+The only relocation token is the literal `@PREFIX@`; the packer never renders an
+absolute path and `install.sh` substitutes it at install time (pure bash
+replacement, never sed). Generated `containers.conf` pins `conmon_path`,
+`helper_binaries_dir`, `init_path`, `seccomp_profile`, `runtime = "crun"` and
+the `[engine.runtimes]` map at the prefix. Generated `storage.conf` is complete
+(selecting it via `CONTAINERS_STORAGE_CONF` skips upstream's drop-in) and sets
+`graphroot = <prefix>/var/lib/containers/storage`,
+`runroot = <prefix>/var/run/containers/storage`,
+`mount_program = <prefix>/bin/fuse-overlayfs`, `mountopt = "nodev"`.
+
+`bin/podman-env.sh` prepends `<prefix>/bin` (idempotently) and exports
+`CONTAINERS_CONF`, `CONTAINERS_STORAGE_CONF`, `CONTAINERS_REGISTRIES_CONF`, plus
+`CONTAINERS_POLICY_JSON` only when the host has no `/etc/containers/policy.json`
+(so a stricter distro policy is never overridden). It never touches shell rc
+files or `XDG_*`.
+
+`install.sh`/`uninstall.sh` contract: dedicated absolute prefix
+(`--prefix` > `PODMAN_STATIC_PREFIX` > `$HOME/.local/opt/podman-static`), spaces
+allowed, root refused, unsafe prefixes (`..`, quotes, `$`, control chars) and
+unmanaged non-empty prefixes refused. Installation is staged inside the prefix
+and publishes a `.podman-static/manifest` last (sha256 per file, symlink targets,
+created dirs); an identical reinstall is a no-op, a differing one requires
+uninstall first. Uninstall removes only unchanged manifest entries, keeps
+modified/foreign files (exit 1 with a report) and never touches `var/`.
+Host prerequisites are advisory warnings only. Task 2 deliberately targets the
+normal rootless runtime with a prefix-local store; it does not bundle privileged
+helpers, systemd/quadlet support, or a `docker` alias, and does not implement
+in-place upgrades.
 
 ## Container vs host boundary
 

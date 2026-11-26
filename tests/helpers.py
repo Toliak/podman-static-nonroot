@@ -105,6 +105,7 @@ REQUIRED_VAR_KEYS: tuple[str, ...] = (
     "DEB_FILE",
     "RPM_FILE",
     "PKG_FILE",
+    "USER_FILE",
 )
 
 
@@ -204,6 +205,36 @@ def package_paths(out_dir: Path, vars: dict[str, str]) -> dict[str, Path]:
         "rpm": out_dir / vars["RPM_FILE"],
         "pkg": out_dir / vars["PKG_FILE"],
     }
+
+
+def user_tarball_path(out_dir: Path, vars: dict[str, str]) -> Path:
+    """Return the expected relocatable user tarball path inside out_dir."""
+    return out_dir / vars["USER_FILE"]
+
+
+def extract_tarball(tarball: Path, dest: Path) -> Path:
+    """Extract tarball into dest with stdlib tarfile and return the podman-static-user root.
+
+    Members are validated manually (no absolute paths, no '..' segments, no
+    special files) before extraction. Symlinks and permission bits are kept as
+    recorded, so this is only safe for tarballs built by this trusted repo.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tarball, "r:gz") as tf:
+        for member in tf.getmembers():
+            name = member.name
+            if name.startswith("/") or ".." in Path(name).parts:
+                raise AssertionError(f"unsafe member path in {tarball}: {name}")
+            if member.isdev() or member.ischr() or member.isblk() or member.isfifo():
+                raise AssertionError(f"special file in {tarball}: {name}")
+        # Manual checks above; the payload is a repo-built, trusted tarball.
+        try:
+            tf.extractall(dest, filter="data")
+        except TypeError:  # Python < 3.12 has no extraction filters
+            tf.extractall(dest)
+    root = dest / "podman-static-user"
+    assert root.is_dir(), f"missing podman-static-user root in {tarball}"
+    return root
 
 
 def read_ar(deb: Path) -> dict[str, bytes]:

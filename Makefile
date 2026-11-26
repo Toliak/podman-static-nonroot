@@ -36,6 +36,7 @@ PKG_RELEASE ?= $(shell ARCH='$(ARCH)' PLATFORM='$(PLATFORM)' UPSTREAM_VERSION='$
 ARCH_DEB ?= $(shell ARCH='$(ARCH)' PLATFORM='$(PLATFORM)' UPSTREAM_VERSION='$(UPSTREAM_VERSION)' bash scripts/version.sh ARCH_DEB)
 ARCH_RPM ?= $(shell ARCH='$(ARCH)' PLATFORM='$(PLATFORM)' UPSTREAM_VERSION='$(UPSTREAM_VERSION)' bash scripts/version.sh ARCH_RPM)
 ARCH_PKG ?= $(shell ARCH='$(ARCH)' PLATFORM='$(PLATFORM)' UPSTREAM_VERSION='$(UPSTREAM_VERSION)' bash scripts/version.sh ARCH_PKG)
+USER_FILE ?= $(shell ARCH='$(ARCH)' PLATFORM='$(PLATFORM)' UPSTREAM_VERSION='$(UPSTREAM_VERSION)' bash scripts/version.sh USER_FILE)
 
 PACK_ENV = ASSET_DIR='$(ASSET_DIR)' OUT_DIR='$(OUT_DIR)' PLATFORM='$(PLATFORM)' ARCH='$(ARCH)' CACHE_DIR='$(CACHE_DIR)' PKG_NAME='$(PKG_NAME)' NFPM_VERSION='$(NFPM_VERSION)' NFPM_BIN='$(NFPM_BIN)' UPSTREAM_REPO='$(UPSTREAM_REPO)' UPSTREAM_REF='$(UPSTREAM_REF)' UPSTREAM_VERSION='$(UPSTREAM_VERSION)'
 
@@ -43,7 +44,7 @@ PODMAN_ENV = -e PLATFORM='$(PLATFORM)' -e ARCH='$(ARCH)' -e OUT_DIR='$(OUT_DIR)'
 
 PODMAN_RUN = $(PODMAN) run --rm --userns=keep-id -v "$(CURDIR):/work" -w /work $(PODMAN_ENV) $(TOOLS_IMAGE)
 
-.PHONY: all fetch tools-image build stage pack pack-deb pack-rpm pack-pkg pack-fixture checksums test lint vet clean distclean vm-test print-vars print-release-assets register-qemu _all _stage _pack _pack-deb _pack-rpm _pack-pkg _pack-fixture _checksums _test _lint _vet
+.PHONY: all fetch tools-image build stage pack pack-user pack-deb pack-rpm pack-pkg pack-fixture checksums test lint vet clean distclean vm-test print-vars print-release-assets register-qemu _all _stage _pack _pack-user _pack-deb _pack-rpm _pack-pkg _pack-fixture _checksums _test _lint _vet
 
 all: tools-image
 	$(PODMAN_RUN) make _all
@@ -73,6 +74,13 @@ pack: tools-image
 
 _pack:
 	$(PACK_ENV) bash scripts/pack.sh
+	$(PACK_ENV) bash scripts/pack-user.sh
+
+pack-user: tools-image
+	$(PODMAN_RUN) make _pack-user
+
+_pack-user:
+	$(PACK_ENV) bash scripts/pack-user.sh
 
 pack-deb: tools-image
 	$(PODMAN_RUN) make _pack-deb
@@ -116,13 +124,13 @@ lint: tools-image
 _lint:
 	ruff check --config tests/pyproject.toml .
 	ruff format --check --config tests/pyproject.toml .
-	shellcheck -x -S warning scripts/*.sh
+	shellcheck -x -S warning scripts/*.sh templates/*.sh
 
 vet: tools-image
 	$(PODMAN_RUN) make _vet
 
 _vet:
-	shellcheck -x -S warning scripts/*.sh
+	shellcheck -x -S warning scripts/*.sh templates/*.sh
 
 clean:
 	rm -rf $(OUT_DIR) $(CACHE_DIR)/rootfs
@@ -147,6 +155,7 @@ print-vars:
 	@echo "ARCH_DEB=$(ARCH_DEB)"
 	@echo "ARCH_RPM=$(ARCH_RPM)"
 	@echo "ARCH_PKG=$(ARCH_PKG)"
+	@echo "USER_FILE=$(USER_FILE)"
 	@echo "ASSET_DIR=$(ASSET_DIR)"
 	@echo "OUT_DIR=$(OUT_DIR)"
 	@echo "CACHE_DIR=$(CACHE_DIR)"
