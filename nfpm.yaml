@@ -1,0 +1,29 @@
+name: @PKG_NAME@
+arch: @ARCH@
+platform: linux
+version: "@PKG_VERSION@"
+release: "@PKG_RELEASE@"
+maintainer: "podman-static maintainers <noreply@mgoltzsche.github.invalid>"
+description: "Statically linked podman and container tools, including documentation"
+vendor: "mgoltzsche"
+homepage: "https://github.com/mgoltzsche/podman-static"
+license: "Apache-2.0"
+section: utils
+priority: optional
+contents:
+  - src: @ASSET_DIR@/usr/local
+    dst: /usr/local
+    type: tree
+  - src: @ASSET_DIR@/etc/containers
+    dst: /etc/containers
+    type: config|noreplace|tree
+  - src: @ASSET_DIR@/README.md
+    dst: /usr/share/doc/@PKG_NAME@/README.md
+  - src: /usr/local/bin/podman
+    dst: /usr/bin/docker
+    type: symlink
+rpm:
+  group: Applications/System
+  summary: "Statically linked podman and container tools"
+archlinux:
+  packager: "podman-static maintainers <noreply@mgoltzsche.github.invalid>"
