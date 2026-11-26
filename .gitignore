@@ -1,5 +1,5 @@
 out/
-.tools/
+.cache/
 .venv*/
 .pytest_cache/
 .ruff_cache/
@@ -9,4 +9,3 @@ __pycache__/
 tests/vm/results/
 *.asc
 *.sha256
-dist/podman-static/build/

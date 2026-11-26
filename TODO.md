@@ -2,6 +2,42 @@
 
 Test/tooling conventions mirror `/home/agentic/Projects/pinp`: tooling is non-Python (`Makefile` + shell + `nfpm.yaml`); a self-contained `uv` Python black-box suite lives under `tests/`; heavy infra is an opt-in, marker-gated VM harness; docs are `AGENTS.md` / `INFO.md` / `TODO.md`. Every non-unit test must be written in or executable via pytest.
 
+## Architecture change (2026-11-26)
+
+All `[x]` items below describe the ORIGINAL Task 1 design (vendored
+`dist/podman-static`, docker/buildx for the real build, host-side nfpm) and are
+kept as a historical record. The following decisions supersede them; the current
+truth is in `AGENTS.md` / `INFO.md` / `README.md`.
+
+- Full cutover: `dist/podman-static/` is DELETED (was an untracked nested git
+  checkout). Upstream source is fetched at build time inside `Containerfile` into
+  `.cache/upstream/`; the compiled rootfs is exported to `.cache/rootfs/`.
+- NO docker anywhere: no CLI, no daemon, no `buildx`, no `~/.local/bin/docker`
+  shim, no upstream `Makefile`. Upstream `Dockerfile` is built directly with
+  `podman build --target tar-archive -o type=local` (no builder).
+- Everything in podman: host `make` orchestrates three podman operations —
+  `Containerfile` fetch, `podman build` of the fetched Dockerfile, `podman run` of
+  `Containerfile.tools` for stage/pack/test/lint. NO nested podman.
+- podman is MANDATORY for `make all`; there is no container-free host fallback.
+  `scripts/ensure-nfpm.sh` and `.tools/` are gone; nfpm v2.49.0, the locked
+  pytest/ruff venv, shellcheck and archive tools are baked into the tooling image.
+- Public targets (`all pack test lint ...`) wrap `_`-prefixed internal targets;
+  the tooling image runs internal targets so it never recurses.
+- Pinning: `UPSTREAM_REF=c55c0fbb9ede2937f71536a394d5cccc5efafcfe` (full 40-char
+  SHA — GitHub rejects short SHAs for `git fetch`), `UPSTREAM_VERSION=v6.2.0`.
+  `make fetch` + `scripts/verify-upstream.sh` assert the rev and that the fetched
+  `Dockerfile`'s `ARG PODMAN_VERSION` matches `UPSTREAM_VERSION`.
+- `scripts/version.sh` now derives VERSION/RELEASE from `UPSTREAM_VERSION`; the
+  `PODMAN_STATIC_DESCRIBE` / `PODMAN_STATIC_GIT` /
+  `PODMAN_STATIC_PODMAN_VERSION` override hooks remain for the test suite.
+- `PROXY` is opt-in (defaults to standard `ALL_PROXY`/`HTTPS_PROXY`/`HTTP_PROXY`
+  env vars): when set, podman builds get `--network=host` + proxy passthrough so a
+  `127.0.0.1` SOCKS/HTTP proxy works inside RUN steps. Needed for the flaky
+  `passt.top` upstream clone; the no-proxy path is unchanged and keeps its cache.
+- Deferred items (CI wiring, GPG signatures, VM harness, Task 2) are UNCHANGED;
+  the old "leave upstream untouched / CI deferred because workflow.yml is
+  vendored" rationale no longer applies — CI wiring is simply still deferred.
+
 ## Task 1 decisions (2026-11-26)
 
 Task 1 is implemented; `make all` is green (49 pytest tests + ruff + shellcheck).
@@ -123,7 +159,7 @@ Decisions on the "Confirm before coding" items (all reversible via Makefile vars
   - Confirm before coding: guest distro (recommend Debian 13 genericcloud; alternative Fedora Cloud with `selinux=0` gives native `rpm` + `dnf` and `dpkg`/`pacman` from repos) and whether native `pacman -U` is required (recommend extraction+verify to keep one generic guest).
 
 - [ ] Final wiring, docs, and verification.
-  - `make all` = `build` (synthetic-fixture path) + `pack` + `test` (pytest) + `lint` (ruff check/format + shellcheck); pinned nfpm + `uv sync --project tests --frozen`; `AGENTS.md` conventions + `Gotchas` refreshed, `INFO.md` background updated.
-  - Verification commands: `make all`, `make vm-test` (opt-in, needs QEMU + network, ~600 MB download), `shellcheck -x -S warning scripts/*.sh tests/vm/*.sh`, `uv run --project tests ruff format --check .`.
-  - Docs: `README.md` replaces the manual prose at `dist/podman-static/README.md:79-80` with the automated `install.sh` flow; `TODO.md` items marked `[x]` with `Resolved (date)` notes as each lands (pinp style).
+  - `make all` = `tools-image` + `_pack-fixture` (synthetic fixture) + `_test` (pytest) + `_lint` (ruff check/format + shellcheck), all inside the tooling image; pinned nfpm v2.49.0 + `uv sync --project /opt/tests-deps --frozen` baked into `Containerfile.tools`; `AGENTS.md` conventions + `Gotchas` refreshed, `INFO.md` background updated.
+  - Verification commands: `make tools-image`, `make all`, `make fetch build pack` (real podman build), `make vm-test` (opt-in, needs QEMU + network, ~600 MB download), `shellcheck -x -S warning scripts/*.sh`, `ruff format --check --config tests/pyproject.toml .` inside the tooling image.
+  - Docs: `README.md` replaces the manual prose at `.cache/upstream/README.md:79-80` with the automated `install.sh` flow; `TODO.md` items marked `[x]` with `Resolved (date)` notes as each lands (pinp style).
   - Register `vm` / `e2e` markers in `tests/pyproject.toml`; ensure `norecursedirs` excludes `vm/results` so the default suite never tries to boot a VM.

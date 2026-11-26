@@ -39,7 +39,7 @@ def test_describe_bare_tag_release_one() -> None:
     assert v["PKG_RELEASE"] == "1"
 
 
-def test_no_git_fallback_to_dockerfile() -> None:
+def test_env_fallback_to_podman_version() -> None:
     v = load_vars(
         {
             "PODMAN_STATIC_GIT": "false",

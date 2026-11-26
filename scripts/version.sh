@@ -5,9 +5,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
 
 PLATFORM=${PLATFORM:-linux/amd64}
-DIST_DIR=${DIST_DIR:-dist/podman-static}
+UPSTREAM_VERSION=${UPSTREAM_VERSION:-v6.2.0}
 PKG_NAME=${PKG_NAME:-podman-static}
-DOCKERFILE=${PODMAN_STATIC_DOCKERFILE:-$DIST_DIR/Dockerfile}
 
 if [[ -n ${ARCH:-} ]]; then
   _arch=$ARCH
@@ -43,14 +42,12 @@ git_disabled() {
 
 describe=${PODMAN_STATIC_DESCRIBE:-}
 if [[ -z $describe ]] && ! git_disabled; then
-  if command -v git >/dev/null 2>&1 && git -C "$DIST_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    describe=$(git -C "$DIST_DIR" describe --tags --always 2>/dev/null || true)
-  fi
+  describe=$UPSTREAM_VERSION
 fi
 
 derived_version=""
 derived_release=""
-VERSION_SCHEME=git-describe
+VERSION_SCHEME=upstream-version
 
 if [[ $describe =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)-([0-9]+)-g[0-9a-fA-F]+(-dirty)?$ ]]; then
   derived_version=${BASH_REMATCH[1]}
@@ -59,11 +56,8 @@ elif [[ $describe =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)(-dirty)?$ ]]; then
   derived_version=${BASH_REMATCH[1]}
   derived_release=1
 else
-  VERSION_SCHEME=dockerfile-fallback
-  fallback=${PODMAN_STATIC_PODMAN_VERSION:-}
-  if [[ -z $fallback && -f $DOCKERFILE ]]; then
-    fallback=$(awk -F= '/^[[:space:]]*ARG[[:space:]]+PODMAN_VERSION=/ {print $2; exit}' "$DOCKERFILE")
-  fi
+  VERSION_SCHEME=env-fallback
+  fallback=${PODMAN_STATIC_PODMAN_VERSION:-$UPSTREAM_VERSION}
   derived_version=$(sanitize_version "$fallback")
   derived_release=1
 fi

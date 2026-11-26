@@ -10,39 +10,54 @@ def _make(*args: str) -> str:
 
 
 def test_pack_targets_dry_run_reference_packager() -> None:
-    for target in ("pack-deb", "pack-rpm", "pack-pkg"):
+    for target in ("_pack-deb", "_pack-rpm", "_pack-pkg"):
         out = _make("-n", target).lower()
         assert "nfpm" in out or "pack.sh" in out or "package" in out, (
             f"{target} dry-run does not reference packaging: {out}"
         )
 
 
+def test_public_targets_run_via_podman() -> None:
+    for target in ("pack", "test", "lint", "all"):
+        out = _make("-n", target).lower()
+        assert "podman" in out, f"{target} dry-run does not use podman: {out}"
+    assert "_all" in _make("-n", "all"), "all must delegate to _all"
+
+
 def test_print_vars() -> None:
     out = _make("print-vars")
     assert re.search(r"PKG_VERSION[^\n]*6\.2\.0", out), out
     assert "podman-static" in out
+    assert "UPSTREAM_REF=c55c0fb" in out, out
 
 
-def test_test_target_uses_no_sync_and_pytest() -> None:
-    out = _make("-n", "test").lower()
+def test_test_target_uses_pytest() -> None:
+    out = _make("-n", "_test").lower()
     assert "pytest" in out, out
-    assert "--no-sync" in out, out
 
 
-def test_sync_target_uses_frozen() -> None:
-    out = _make("-n", "sync").lower()
-    assert "--frozen" in out, out
-    assert "sync" in out, out
+def test_tools_image_uses_frozen_lock() -> None:
+    containerfile = (ROOT / "Containerfile.tools").read_text()
+    assert "uv sync" in containerfile, containerfile
+    assert "--frozen" in containerfile, containerfile
 
 
 def test_phony_lists_core_targets() -> None:
     makefile = (ROOT / "Makefile").read_text()
     phony = "\n".join(line for line in makefile.splitlines() if ".PHONY" in line)
     assert ".PHONY" in makefile
-    for target in ("pack", "build", "test", "lint"):
+    for target in ("pack", "build", "test", "lint", "fetch", "tools-image", "_all"):
         assert re.search(rf"\b{target}\b", phony), f"{target} not in .PHONY"
 
 
 def test_clean_dry_run_removes_out() -> None:
     out = _make("-n", "clean")
     assert "rm -rf out" in out, out
+
+
+def test_no_docker_cli_or_buildx() -> None:
+    paths = [ROOT / "Makefile", *sorted((ROOT / "scripts").glob("*.sh"))]
+    for path in paths:
+        text = path.read_text().lower()
+        for forbidden in ("docker build", "docker run", "buildx", "dist/podman-static"):
+            assert forbidden not in text, f"{path}: {forbidden}"

@@ -143,8 +143,29 @@ def run_tool(
 
 
 def load_vars(env: dict[str, str] | None = None) -> dict[str, str]:
-    """Run scripts/version.sh and parse its KEY=value lines into a dict."""
-    result = run_tool("bash", "scripts/version.sh", env=env)
+    """Run scripts/version.sh and parse its KEY=value lines into a dict.
+
+    The wrapper injects derived vars into the container environment; neutralize
+    them here so each test controls version.sh's inputs explicitly.
+    """
+    clean = {
+        "PLATFORM": "",
+        "ARCH": "",
+        "PKG_NAME": "",
+        "PKG_VERSION": "",
+        "PKG_RELEASE": "",
+        "UPSTREAM_VERSION": "",
+        "UPSTREAM_REF": "",
+        "UPSTREAM_REPO": "",
+        "NFPM_VERSION": "",
+        "NFPM_BIN": "",
+        "ASSET_DIR": "",
+        "OUT_DIR": "",
+        "CACHE_DIR": "",
+    }
+    if env:
+        clean.update(env)
+    result = run_tool("bash", "scripts/version.sh", env=clean)
     out: dict[str, str] = {}
     for line in result.stdout.splitlines():
         line = line.strip()
@@ -166,10 +187,10 @@ def nfpm_config(
 
 
 def pack_fixture(out_dir: Path) -> Path:
-    """Pack the synthetic fixture tree into out_dir via make pack."""
+    """Pack the synthetic fixture tree into out_dir via the internal make target."""
     run_tool(
         "make",
-        "pack",
+        "_pack",
         "ASSET_DIR=tests/fixtures/asset",
         f"OUT_DIR={out_dir}",
     )

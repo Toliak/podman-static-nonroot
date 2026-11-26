@@ -1,45 +1,77 @@
 # podman-static-nonroot
 
 Builds `.deb`, `.rpm` and Arch `.pkg.tar.zst` packages of the statically linked
-(musl) rootless podman binaries from the vendored `mgoltzsche/podman-static`
-upstream. This is **Task 1** (packaging). The relocatable **non-root tarball +
-`install.sh` (Task 2)**, the QEMU VM harness, CI/release wiring, GPG signatures
-and maintainer scripts are **planned, not implemented**.
+(musl) rootless podman binaries from `mgoltzsche/podman-static`. This is **Task 1**
+(packaging). The relocatable **non-root tarball + `install.sh` (Task 2)**, the QEMU
+VM harness, CI/release wiring, GPG signatures and maintainer scripts are **planned,
+not implemented**.
+
+Upstream source is **fetched at build time** inside `Containerfile` — it is not
+vendored in this repository. Everything that does build work runs in **podman**
+containers; docker is never used.
 
 Packages install to the same absolute paths upstream uses (`/usr/local`,
 `/etc/containers`); they contain NO runtime deps and NO maintainer scripts.
 
 ## Prerequisites
 
-- `make`, `bash`, `curl`, `uv` (Python >= 3.10 for the `tests/` project).
-- Test-side archive inspection: `ar`, `tar`, `rpm`, `zstd`/`bsdtar` where
-  available. These are NOT needed to BUILD packages.
-- `docker` + `buildx` — ONLY for `make build` (real upstream binaries).
-- Packaging uses **nfpm** (pinned `v2.49.0`), a rootless pure-Go static binary
-  downloaded on first use and cached at `.tools/nfpm-<version>`. No host
-  `dpkg-deb` / `rpmbuild` / `makepkg`, and no root, are needed.
+- `make`, `bash`, `podman` (rootless), network.
+- Nothing else on the host: nfpm, pytest/ruff, shellcheck, `ar`, `rpm`, `zstd`,
+  and `bsdtar` all live in the tooling image.
+- NO `docker`, NO `buildx`, NO `~/.local/bin/docker` shim.
 
 ## Quickstart
 
 ```sh
-make all                # packs the synthetic fixture + test + lint; green with NO docker
-make pack-fixture       # fixture packages into out/ only (no docker, no host tools)
-make print-vars         # show derived VERSION/RELEASE/ARCH and paths
-make clean              # rm -rf out/
+make tools-image       # build the tooling image (cached after first run)
+make all               # pack the synthetic fixture + test + lint, all in podman
+make pack-fixture      # fixture packages into out/ only
+make print-vars        # show derived VERSION/RELEASE/ARCH and paths
+make clean             # rm -rf out/ .cache/rootfs
 ```
 
-Real packages (opt-in, needs docker/buildx):
+Real packages (opt-in, heavier — compiles the upstream static binaries):
 
 ```sh
-make build              # real upstream build -> out/asset/podman-linux-<ARCH>/
-make pack               # all 3 formats -> out/ (+ SHA256SUMS)
+make fetch             # fetch pinned upstream into .cache/upstream/
+make build             # podman build of upstream Dockerfile -> out/asset/...
+make pack              # all 3 formats -> out/ (+ SHA256SUMS)
 ```
 
+If an upstream clone is blocked by your network, pass an opt-in proxy (also
+honors standard `ALL_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY` env vars):
+
+```sh
+make build PROXY=socks5://127.0.0.1:23133
+```
+
+When `PROXY` is set, podman builds use `--network=host` so a `127.0.0.1` proxy is
+reachable inside RUN steps. With no proxy the build command is plain
+`podman build` and its layer cache is preserved.
+
 `make pack-deb` / `make pack-rpm` / `make pack-pkg` build one format;
-`make checksums` rewrites `out/SHA256SUMS`;
+`make checksums` rewrites `out/SHA256SUMS`; `make distclean` also removes `.cache/`.
 `make print-release-assets` prints the 6 package files (3 formats x 2 arches) +
-`SHA256SUMS` for a future CI step (CI wiring is deferred, the vendored upstream
-workflow is left untouched).
+`SHA256SUMS` for a future CI step (CI wiring is deferred).
+
+`make register-qemu` is opt-in host binfmt registration for arm64 cross-builds;
+rootless `--privileged` may not be able to register `binfmt_misc` (may need host
+root). amd64 is native and the default.
+
+## How it works
+
+| Step | Command | podman operation |
+| --- | --- | --- |
+| Fetch upstream | `make fetch` | `podman build -f Containerfile ... -o type=local` |
+| Compile binaries | `make build` | `podman build -f .cache/upstream/Dockerfile --target tar-archive -o type=local` |
+| Stage + pack + test | `make pack`, `make all` | `podman run` of the tooling image |
+
+`UPSTREAM_REF` pins the exact commit (full 40-char SHA — GitHub requires it for
+`git fetch origin <sha>`), `UPSTREAM_VERSION` sets the stamped package version;
+`make fetch` verifies the fetched `Dockerfile`'s `ARG PODMAN_VERSION` agrees.
+
+`podman build -o type=local` replaces `docker buildx build --output type=local`:
+no builder, no `create-builder`. Rootless bind mounts use `--userns=keep-id`.
 
 ## out/ layout
 
@@ -53,11 +85,14 @@ out/
 └── SHA256SUMS
 ```
 
+`.cache/` holds the fetched upstream tree (`upstream/`) and the exported rootfs
+(`rootfs/`); both are gitignored.
+
 ## Naming / version scheme
 
-VERSION/RELEASE come from `git -C dist/podman-static describe --tags --always`
-(`v6.2.0-1-gc55c0fb` -> `6.2.0` / `1`), falling back to `PODMAN_VERSION=v6.2.0`.
-`ARCH` is `amd64` or `arm64`; per-format arch:
+VERSION/RELEASE come from `UPSTREAM_VERSION` (`v6.2.0` -> `6.2.0` / `1`), kept in
+sync with the fetched upstream `Dockerfile` by `make fetch`. `ARCH` is `amd64` or
+`arm64`; per-format arch:
 
 | Format | Filename | ARCH (amd64 / arm64) |
 | --- | --- | --- |
@@ -81,7 +116,11 @@ Use the matching per-arch filename for your machine. Upstream host prerequisites
 still apply and are NOT handled by the packages (no maintainer scripts):
 `nftables`, `nsenter`, setuid/cap-enabled `newuidmap`/`newgidmap`,
 `/etc/subuid` + `/etc/subgid` delegation for your user, the apparmor profile fix
-on Ubuntu >= 23.10, and the optional `docker` symlink. See `INFO.md`.
+on Ubuntu >= 23.10, and an optional `docker` compatibility symlink. See `INFO.md`.
+
+The `/usr/bin/docker` symlink shipped inside the package is a payload name for
+docker-compatible CLIs — it is NOT a build dependency and has nothing to do with
+the docker CLI.
 
 ## Planned, not implemented (future)
 

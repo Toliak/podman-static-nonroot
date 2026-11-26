@@ -5,9 +5,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
 
 OUT_DIR=${OUT_DIR:-out}
-NFPM_VERSION=${NFPM_VERSION:-v2.49.0}
-NFPM_CACHE_DIR=${NFPM_CACHE_DIR:-.tools}
-NFPM_BIN=${NFPM_BIN:-}
+NFPM_BIN=${NFPM_BIN:-nfpm}
 
 v() { bash scripts/version.sh "$1"; }
 
@@ -46,12 +44,8 @@ case "$mode" in
 esac
 
 if [[ ! -d "$ASSET_DIR/usr/local" || ! -d "$ASSET_DIR/etc/containers" ]]; then
-  printf 'asset tree %s is incomplete; run "make build" (docker) or "make pack-fixture"\n' "$ASSET_DIR" >&2
+  printf 'asset tree %s is incomplete; run "make build" (podman) or "make pack-fixture"\n' "$ASSET_DIR" >&2
   exit 1
-fi
-
-if [[ -z $NFPM_BIN ]]; then
-  NFPM_BIN=$(NFPM_VERSION="$NFPM_VERSION" NFPM_CACHE_DIR="$NFPM_CACHE_DIR" bash scripts/ensure-nfpm.sh)
 fi
 
 mkdir -p "$OUT_DIR"

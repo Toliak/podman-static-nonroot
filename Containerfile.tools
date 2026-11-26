@@ -1,0 +1,29 @@
+FROM docker.io/library/alpine:3.24
+
+RUN apk add --no-cache \
+      bash make git curl tar gzip zstd binutils \
+      rpm libarchive-tools python3 shellcheck ca-certificates
+
+ARG NFPM_VERSION=v2.49.0
+RUN set -eux; \
+    version_no_v=${NFPM_VERSION#v}; \
+    case "$(uname -m)" in \
+      x86_64) goarch=x86_64 ;; \
+      aarch64|arm64) goarch=arm64 ;; \
+      *) goarch="$(uname -m)" ;; \
+    esac; \
+    curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${version_no_v}/nfpm_${version_no_v}_Linux_${goarch}.tar.gz" -o /tmp/nfpm.tar.gz; \
+    tar -xzf /tmp/nfpm.tar.gz -C /usr/local/bin nfpm; \
+    rm -f /tmp/nfpm.tar.gz; \
+    nfpm --version
+
+COPY tests/pyproject.toml tests/uv.lock /opt/tests-deps/
+ENV UV_PYTHON=/usr/bin/python3 UV_PYTHON_DOWNLOADS=never
+RUN curl -fsSL https://astral.sh/uv/install.sh -o /tmp/uv-install.sh \
+ && UV_INSTALL_DIR=/usr/local/bin sh /tmp/uv-install.sh \
+ && rm -f /tmp/uv-install.sh \
+ && uv sync --project /opt/tests-deps --frozen
+
+ENV PATH=/opt/tests-deps/.venv/bin:$PATH
+WORKDIR /work
+CMD ["make", "_all"]

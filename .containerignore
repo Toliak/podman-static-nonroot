@@ -1,0 +1,13 @@
+.git/
+.gitignore
+out/
+.cache/
+.tools/
+dist/
+tests/.venv/
+tests/.pytest_cache/
+tests/.ruff_cache/
+**/__pycache__/
+*.py[cod]
+*.asc
+*.sha256
