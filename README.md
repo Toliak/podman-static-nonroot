@@ -116,11 +116,74 @@ dnf install ./out/podman-static-6.2.0-1.x86_64.rpm         # Fedora / RHEL
 pacman -U ./out/podman-static-6.2.0-1-x86_64.pkg.tar.zst   # Arch Linux
 ```
 
-Use the matching per-arch filename for your machine. Upstream host prerequisites
-still apply and are NOT handled by the packages (no maintainer scripts):
-`nftables`, `nsenter`, setuid/cap-enabled `newuidmap`/`newgidmap`,
-`/etc/subuid` + `/etc/subgid` delegation for your user, the apparmor profile fix
-on Ubuntu >= 23.10, and an optional `docker` compatibility symlink. See `INFO.md`.
+Use the matching per-arch filename for your machine. The packages contain no
+maintainer scripts, so the host setup below is **not** performed automatically;
+it is required for rootless operation and must be done by an administrator (or
+by you on a machine you control).
+
+### Rootless prerequisites (all install methods)
+
+The statically linked binaries are self-contained, but rootless podman still
+relies on a few host facilities. Install them with your distro's package
+manager:
+
+| Distro | Command |
+| --- | --- |
+| Debian / Ubuntu | `sudo apt install uidmap nftables util-linux` |
+| Fedora / RHEL | `sudo dnf install shadow-utils nftables util-linux` |
+| Arch Linux | `sudo pacman -S shadow nftables util-linux` |
+
+- **`newuidmap` / `newgidmap`** must be privileged to map subordinate UID/GID
+  ranges. Verify the distro binaries carry the setuid bit or file capabilities:
+
+  ```sh
+  ls -l "$(command -v newuidmap)" "$(command -v newgidmap)"
+  getcap "$(command -v newuidmap)" "$(command -v newgidmap)"
+  ```
+
+  A setuid-root binary (`-rwsr-xr-x root root`) or `cap_setuid=ep` /
+  `cap_setgid=ep` capabilities are both sufficient. Do **not** copy or
+  `chmod u+s` your own copies: setuid only takes effect when the file is owned
+  by root, which a user-scoped install cannot arrange.
+
+- **Subordinate UID/GID delegation** gives your user a range to map container
+  IDs onto:
+
+  ```sh
+  sudo sh -c "echo $(id -un):100000:200000 >> /etc/subuid"
+  sudo sh -c "echo $(id -gn):100000:200000 >> /etc/subgid"
+  grep "^$(id -un):" /etc/subuid /etc/subgid   # verify; do not add twice
+  ```
+
+- **Unprivileged user namespaces** must be enabled. The
+  `kernel.unprivileged_userns_clone` knob exists on Debian/Ubuntu (absent
+  elsewhere means the feature is enabled); if it reports `0`, enable it
+  persistently:
+
+  ```sh
+  echo 'kernel.unprivileged_userns_clone=1' | sudo tee /etc/sysctl.d/99-podman.conf
+  sudo sysctl --system
+  ```
+
+- **AppArmor** (Ubuntu >= 23.10): the distro profile only matches
+  `/usr/bin/podman`, so the first run can fail with `reexec: Permission denied`.
+  Extend it to the packaged path:
+
+  ```sh
+  sudo sed -Ei 's!^profile podman /usr/bin/podman !profile podman /usr/{bin,local/bin}/podman !' /etc/apparmor.d/podman
+  ```
+
+- **`/dev/fuse`** must exist for the bundled `fuse-overlayfs` storage driver;
+  load it with `sudo modprobe fuse` if it is missing.
+- **`nftables`** and **`nsenter`** are used by the default netavark network
+  stack; both are installed by the commands above.
+
+Then verify the installation:
+
+```sh
+podman info
+podman run --rm docker.io/library/alpine echo hello
+```
 
 The `/usr/bin/docker` symlink shipped inside the package is a payload name for
 docker-compatible CLIs — it is NOT a build dependency and has nothing to do with
@@ -150,10 +213,12 @@ store) and are preserved by uninstall. Uninstall removes only files that are
 still unchanged; modified and unrelated files are reported and kept. An
 identical reinstall is a no-op; a different release requires uninstall first.
 
-Host prerequisites are detected and **warned** about, never changed:
-subuid/subgid delegation, `newuidmap`/`newgidmap`, `nftables`, `nsenter`,
-`/dev/fuse` and user-namespace/AppArmor host policy. systemd units, quadlet
-generators and the `docker` alias are **not** part of the user payload.
+The same [rootless prerequisites](#rootless-prerequisites-all-install-methods)
+apply. `install.sh` only detects and **warns** about them — it never changes host
+policy. Without subuid/subgid delegation and privileged `newuidmap`/`newgidmap`,
+podman falls back to a degraded single-UID mapping (containers still run, but
+files appear owned by your user and multi-UID images misbehave). systemd units,
+quadlet generators and the `docker` alias are **not** part of the user payload.
 
 ## Planned, not implemented (future)
 
